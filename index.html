@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wumpus World</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .controls { margin: 20px 0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; font-size: 16px; }
+        .grid { display: grid; gap: 5px; margin: 20px 0; }
+        .cell { width: 60px; height: 60px; border: 2px solid #ccc; border-radius: 8px; 
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                background: white; font-size: 12px; }
+        .cell.agent { background: #4CAF50; color: white; }
+        .cell.safe { background: #e8f5e9; }
+        .cell.visited { background: #fff3e0; }
+        .cell.pit { background: #333; color: white; }
+        .cell.wumpus { background: #f44336; color: white; }
+        .cell.gold { background: #ffd700; }
+        .percept { font-size: 10px; color: #666; margin-top: 2px; }
+        .log { background: #fff; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; }
+        .log-entry { padding: 5px; border-bottom: 1px solid #eee; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>🤖 Wumpus World Logic Agent</h1>
+    
+    <div class="controls">
+        <label>Rows: <input type="number" id="rows" value="4" min="3" max="7"></label>
+        <label>Cols: <input type="number" id="cols" value="4" min="3" max="7"></label>
+        <button onclick="newGame()">New Game</button>
+    </div>
+    
+    <div class="controls">
+        <button onclick="move('N')">⬆ North</button>
+        <button onclick="move('S')">⬇ South</button>
+        <button onclick="move('E')">➡ East</button>
+        <button onclick="move('W')">⬅ West</button>
+    </div>
+    
+    <div class="controls">
+        <button onclick="runInference()">🔍 Run Inference</button>
+    </div>
+    
+    <div id="status"></div>
+    <div id="grid" class="grid"></div>
+    
+    <h3>Inference Log</h3>
+    <div id="log" class="log"></div>
+
+    <script>
+        let gameState = null;
+        
+        async function newGame() {
+            const rows = parseInt(document.getElementById('rows').value);
+            const cols = parseInt(document.getElementById('cols').value);
+            
+            const res = await fetch('/api/new_game', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rows, cols})
+            });
+            const data = await res.json();
+            if (data.ok) {
+                gameState = data.state;
+                renderGrid();
+                document.getElementById('log').innerHTML = '';
+                updateStatus('Game started!');
+            }
+        }
+        
+        async function move(direction) {
+            if (!gameState) return;
+            
+            const res = await fetch('/api/move', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({direction})
+            });
+            const data = await res.json();
+            
+            if (data.ok) {
+                gameState = data.state;
+                renderGrid();
+                updateStatus(data.message || `Moved ${direction}`);
+                
+                if (data.infer_log) {
+                    renderLog(data.infer_log);
+                }
+                
+                if (data.dead) {
+                    alert('You died! Game over.');
+                }
+                if (data.gold) {
+                    alert('Gold found! You win!');
+                }
+            } else {
+                updateStatus(data.message, true);
+            }
+        }
+        
+        async function runInference() {
+            if (!gameState) return;
+            
+            const res = await fetch('/api/infer', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+            const data = await res.json();
+            
+            if (data.ok) {
+                gameState = data.state;
+                renderGrid();
+                renderLog(data.infer_log);
+                updateStatus(`Inference complete: ${data.steps} steps`);
+            }
+        }
+        
+        function renderGrid() {
+            const grid = document.getElementById('grid');
+            const rows = gameState.grid.length;
+            const cols = gameState.grid[0].length;
+            
+            grid.style.gridTemplateColumns = `repeat(${cols}, 60px)`;
+            grid.innerHTML = '';
+            
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const cell = gameState.grid[r][c];
+                    const div = document.createElement('div');
+                    div.className = 'cell';
+                    
+                    if (cell.is_agent) div.classList.add('agent');
+                    else if (cell.status === 'safe') div.classList.add('safe');
+                    else if (cell.status === 'visited') div.classList.add('visited');
+                    else if (cell.status === 'pit') div.classList.add('pit');
+                    else if (cell.status === 'wumpus') div.classList.add('wumpus');
+                    
+                    let content = `(${cell.r},${cell.c})`;
+                    if (cell.is_agent) content = '🤖';
+                    if (cell.is_gold) content = '💰';
+                    
+                    div.innerHTML = `<div>${content}</div>`;
+                    if (cell.percepts.length > 0) {
+                        div.innerHTML += `<div class="percept">${cell.percepts.join(', ')}</div>`;
+                    }
+                    
+                    grid.appendChild(div);
+                }
+            }
+        }
+        
+        function renderLog(log) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML = log.map(entry => 
+                `<div class="log-entry">${entry}</div>`
+            ).join('');
+        }
+        
+        function updateStatus(msg, isError = false) {
+            document.getElementById('status').innerHTML = 
+                `<p class="${isError ? 'error' : 'success'}">${msg}</p>`;
+        }
+        
+        // Start new game on load
+        newGame();
+    </script>
+</body>
+</html>
